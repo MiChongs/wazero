@@ -243,3 +243,28 @@ func TestCache_Close(t *testing.T) {
 		require.True(t, c.engs[engineKindCompiler].(*mockEngine).closed)
 	})
 }
+
+func TestNewRuntimeUsesContextCompilationCache(t *testing.T) {
+	if !platform.CompilerSupported() {
+		t.Skip("the file cache only stores compiled machine code")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	cache, err := NewCompilationCacheWithDir(dir)
+	require.NoError(t, err)
+	defer cache.Close(ctx)
+
+	r := NewRuntime(WithCompilationCache(ctx, cache))
+	defer r.Close(ctx)
+	require.Equal(t, cache, r.(*runtime).cache)
+	_, err = r.CompileModule(ctx, facWasm)
+	require.NoError(t, err)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, len(entries))
+
+	// A runtime created without the context value keeps its own engine.
+	other := NewRuntime(ctx)
+	defer other.Close(ctx)
+	require.Nil(t, other.(*runtime).cache)
+}

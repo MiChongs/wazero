@@ -30,6 +30,12 @@ func GetWazeroVersion() (ret string) {
 			// Note: here's the assumption that wazero is imported as github.com/metacubex/wazero.
 			if strings.Contains(dep.Path, "github.com/metacubex/wazero") {
 				ret = dep.Version
+				// A replaced module is built from the replacement, and the
+				// version keys compiled module caches: code compiled by a
+				// fork must not be reused under the version it replaces.
+				if dep.Replace != nil {
+					ret = dep.Replace.Path + "@" + dep.Replace.Version
+				}
 			}
 		}
 

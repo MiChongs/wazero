@@ -145,7 +145,19 @@ type Runtime interface {
 
 // NewRuntime returns a runtime with a configuration assigned by NewRuntimeConfig.
 func NewRuntime(ctx context.Context) Runtime {
-	return NewRuntimeWithConfig(ctx, NewRuntimeConfig())
+	config := NewRuntimeConfig()
+	if cache, loaded := ctx.Value(expctxkeys.CompilationCache{}).(CompilationCache); loaded && cache != nil {
+		config = config.WithCompilationCache(cache)
+	}
+	return NewRuntimeWithConfig(ctx, config)
+}
+
+// WithCompilationCache returns a context that makes NewRuntime use cache, for
+// libraries that create their runtime with NewRuntime and take a context from
+// the caller. A RuntimeConfig passed to NewRuntimeWithConfig is not affected.
+// The cache must stay open while runtimes created with it are in use.
+func WithCompilationCache(ctx context.Context, cache CompilationCache) context.Context {
+	return context.WithValue(ctx, expctxkeys.CompilationCache{}, cache)
 }
 
 // NewRuntimeWithConfig returns a runtime with the given configuration.
