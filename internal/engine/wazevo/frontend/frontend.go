@@ -27,10 +27,13 @@ type Compiler struct {
 	memoryWait64Sig        ssa.Signature
 	memoryNotifySig        ssa.Signature
 	checkModuleExitCodeSig ssa.Signature
-	tableGrowSig           ssa.Signature
-	refFuncSig             ssa.Signature
-	memmoveSig             ssa.Signature
-	ensureTermination      bool
+	// terminationCountdownVariable counts down loop iterations until the
+	// next module exit code check; see insertTerminationCheck.
+	terminationCountdownVariable ssa.Variable
+	tableGrowSig                 ssa.Signature
+	refFuncSig                   ssa.Signature
+	memmoveSig                   ssa.Signature
+	ensureTermination            bool
 
 	// Followings are reset by per function.
 
@@ -427,6 +430,12 @@ func (c *Compiler) declareNecessaryVariables() {
 	if c.needMemory {
 		c.memoryBaseVariable = c.ssaBuilder.DeclareVariable(ssa.TypeI64)
 		c.memoryLenVariable = c.ssaBuilder.DeclareVariable(ssa.TypeI64)
+	}
+
+	if c.ensureTermination {
+		c.terminationCountdownVariable = c.ssaBuilder.DeclareVariable(ssa.TypeI32)
+		initial := c.ssaBuilder.AllocateInstruction().AsIconst32(terminationCheckInterval).Insert(c.ssaBuilder).Return()
+		c.ssaBuilder.DefineVariableInCurrentBB(c.terminationCountdownVariable, initial)
 	}
 
 	c.globalVariables = c.globalVariables[:0]

@@ -1352,17 +1352,8 @@ func (c *Compiler) lowerCurrentOpcode() {
 
 		c.switchTo(originalLen, loopHeader)
 
-		if c.ensureTermination {
-			checkModuleExitCodePtr := builder.AllocateInstruction().
-				AsLoad(c.execCtxPtrValue,
-					wazevoapi.ExecutionContextOffsetCheckModuleExitCodeTrampolineAddress.U32(),
-					ssa.TypeI64,
-				).Insert(builder).Return()
-
-			args := c.allocateVarLengthValues(1, c.execCtxPtrValue)
-			builder.AllocateInstruction().
-				AsCallIndirect(checkModuleExitCodePtr, &c.checkModuleExitCodeSig, args).
-				Insert(builder)
+		if c.ensureTermination && !state.unreachable {
+			c.insertTerminationCheck()
 		}
 	case wasm.OpcodeIf:
 		bt := c.readBlockType()
@@ -5042,4 +5033,48 @@ func (c *Compiler) boundsCheckInMemory(memLen, offset, size ssa.Value) {
 	builder.AllocateInstruction().
 		AsExitIfTrueWithCode(c.execCtxPtrValue, cmp, wazevoapi.ExitCodeMemoryOutOfBounds).
 		Insert(builder)
+}
+
+// terminationCheckInterval is how many loop iterations of a function pass
+// between two module exit code checks when termination is enforced.
+const terminationCheckInterval = 1024
+
+// insertTerminationCheck counts down the function's loop iterations and calls
+// the check-module-exit-code trampoline once every terminationCheckInterval
+// of them. Calling it on every iteration, as wazero does upstream, costs a
+// round trip through Go per iteration and halves the speed of loop-heavy
+// guests. The trampoline is kept, rather than reading the module's closed
+// flag inline, because the trip through Go is also what lets the Go
+// scheduler preempt a long-running guest: native code is not preemptible,
+// and a guest spinning without it would stall every stop-the-world phase.
+func (c *Compiler) insertTerminationCheck() {
+	builder := c.ssaBuilder
+	counter := builder.MustFindValue(c.terminationCountdownVariable)
+	one := builder.AllocateInstruction().AsIconst32(1).Insert(builder).Return()
+	remaining := builder.AllocateInstruction().AsIsub(counter, one).Insert(builder).Return()
+	zero := builder.AllocateInstruction().AsIconst32(0).Insert(builder).Return()
+	due := builder.AllocateInstruction().AsIcmp(remaining, zero, ssa.IntegerCmpCondEqual).Insert(builder).Return()
+	builder.DefineVariableInCurrentBB(c.terminationCountdownVariable, remaining)
+
+	checkBlk, continueBlk := builder.AllocateBasicBlock(), builder.AllocateBasicBlock()
+	builder.AllocateInstruction().AsBrnz(due, ssa.ValuesNil, checkBlk).Insert(builder)
+	c.insertJumpToBlock(ssa.ValuesNil, continueBlk)
+
+	builder.SetCurrentBlock(checkBlk)
+	checkModuleExitCodePtr := builder.AllocateInstruction().
+		AsLoad(c.execCtxPtrValue,
+			wazevoapi.ExecutionContextOffsetCheckModuleExitCodeTrampolineAddress.U32(),
+			ssa.TypeI64,
+		).Insert(builder).Return()
+	args := c.allocateVarLengthValues(1, c.execCtxPtrValue)
+	builder.AllocateInstruction().
+		AsCallIndirect(checkModuleExitCodePtr, &c.checkModuleExitCodeSig, args).
+		Insert(builder)
+	reset := builder.AllocateInstruction().AsIconst32(terminationCheckInterval).Insert(builder).Return()
+	builder.DefineVariableInCurrentBB(c.terminationCountdownVariable, reset)
+	c.insertJumpToBlock(ssa.ValuesNil, continueBlk)
+
+	builder.SetCurrentBlock(continueBlk)
+	builder.Seal(checkBlk)
+	builder.Seal(continueBlk)
 }
