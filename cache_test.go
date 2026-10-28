@@ -267,4 +267,15 @@ func TestNewRuntimeUsesContextCompilationCache(t *testing.T) {
 	other := NewRuntime(ctx)
 	defer other.Close(ctx)
 	require.Nil(t, other.(*runtime).cache)
+
+	// A RuntimeConfig without a cache also takes it from the context, and
+	// one with its own cache keeps it.
+	configured := NewRuntimeWithConfig(WithCompilationCache(ctx, cache), NewRuntimeConfig().WithCloseOnContextDone(true))
+	defer configured.Close(ctx)
+	require.Equal(t, cache, configured.(*runtime).cache)
+	own := NewCompilationCache()
+	defer own.Close(ctx)
+	explicit := NewRuntimeWithConfig(WithCompilationCache(ctx, cache), NewRuntimeConfig().WithCompilationCache(own))
+	defer explicit.Close(ctx)
+	require.Equal(t, own, explicit.(*runtime).cache)
 }

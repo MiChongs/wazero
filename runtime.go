@@ -145,16 +145,12 @@ type Runtime interface {
 
 // NewRuntime returns a runtime with a configuration assigned by NewRuntimeConfig.
 func NewRuntime(ctx context.Context) Runtime {
-	config := NewRuntimeConfig()
-	if cache, loaded := ctx.Value(expctxkeys.CompilationCache{}).(CompilationCache); loaded && cache != nil {
-		config = config.WithCompilationCache(cache)
-	}
-	return NewRuntimeWithConfig(ctx, config)
+	return NewRuntimeWithConfig(ctx, NewRuntimeConfig())
 }
 
-// WithCompilationCache returns a context that makes NewRuntime use cache, for
-// libraries that create their runtime with NewRuntime and take a context from
-// the caller. A RuntimeConfig passed to NewRuntimeWithConfig is not affected.
+// WithCompilationCache returns a context that makes NewRuntime and
+// NewRuntimeWithConfig use cache when the RuntimeConfig sets none, for
+// libraries that create their runtime from a context the caller provides.
 // The cache must stay open while runtimes created with it are in use.
 func WithCompilationCache(ctx context.Context, cache CompilationCache) context.Context {
 	return context.WithValue(ctx, expctxkeys.CompilationCache{}, cache)
@@ -163,6 +159,12 @@ func WithCompilationCache(ctx context.Context, cache CompilationCache) context.C
 // NewRuntimeWithConfig returns a runtime with the given configuration.
 func NewRuntimeWithConfig(ctx context.Context, rConfig RuntimeConfig) Runtime {
 	config := rConfig.(*runtimeConfig)
+	if config.cache == nil {
+		if cache, loaded := ctx.Value(expctxkeys.CompilationCache{}).(CompilationCache); loaded && cache != nil {
+			config = config.clone()
+			config.cache = cache
+		}
+	}
 	configKind := config.engineKind
 	configEngine := config.newEngine
 	if configKind == engineKindAuto {
