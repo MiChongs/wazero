@@ -422,7 +422,16 @@ func (m *ModuleInstance) resolveImports(ctx context.Context, module *Module) (er
 		var importedModule *ModuleInstance
 		if resolveImport != nil {
 			if v := resolveImport(moduleName); v != nil {
-				importedModule = v.(*ModuleInstance)
+				// Host modules are handed out wrapped; resolve to the
+				// instance behind the wrapper.
+				if unwrapper, ok := v.(interface{ Unwrap() api.Module }); ok {
+					v = unwrapper.Unwrap()
+				}
+				instance, ok := v.(*ModuleInstance)
+				if !ok {
+					return fmt.Errorf("import resolver returned unsupported module %T for %q", v, moduleName)
+				}
+				importedModule = instance
 			}
 		}
 		if importedModule == nil {

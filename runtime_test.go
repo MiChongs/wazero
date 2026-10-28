@@ -841,3 +841,38 @@ func TestNewRuntime_concurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestImportResolverAcceptsHostModule(t *testing.T) {
+	ctx := context.Background()
+	r := NewRuntime(ctx)
+	defer r.Close(ctx)
+	// Two host modules export the same function under different names; the
+	// resolver links the guest's "env" import to the second one.
+	for name, value := range map[string]uint32{"env_a": 1, "env_b": 2} {
+		value := value
+		_, err := r.NewHostModuleBuilder(name).
+			NewFunctionBuilder().WithFunc(func() uint32 { return value }).Export("value").
+			Instantiate(ctx)
+		require.NoError(t, err)
+	}
+	// (module (import "env" "value" (func (result i32))) (export "call" (func 0)))
+	guest := []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+		0x02, 0x0d, 0x01, 0x03, 'e', 'n', 'v', 0x05, 'v', 'a', 'l', 'u', 'e', 0x00, 0x00,
+		0x07, 0x08, 0x01, 0x04, 'c', 'a', 'l', 'l', 0x00, 0x00,
+	}
+	hostB := r.Module("env_b")
+	require.NotNil(t, hostB)
+	resolverCtx := experimental.WithImportResolver(ctx, func(name string) api.Module {
+		if name == "env" {
+			return hostB
+		}
+		return nil
+	})
+	module, err := r.InstantiateWithConfig(resolverCtx, guest, NewModuleConfig().WithName("guest"))
+	require.NoError(t, err)
+	results, err := module.ExportedFunction("call").Call(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), results[0])
+}

@@ -26,10 +26,15 @@ var crc = crc32.MakeTable(crc32.Castagnoli)
 // fileCacheKey returns a key for the file cache.
 // In order to avoid collisions with the existing compiler, we do not use m.ID directly,
 // but instead we rehash it with magic.
-func fileCacheKey(m *wasm.Module) (ret filecache.Key) {
+func fileCacheKey(m *wasm.Module, ensureTermination bool) (ret filecache.Key) {
 	s := sha256.New()
 	s.Write(m.ID[:])
 	s.Write(magic)
+	// Code compiled with termination checks differs from code without them,
+	// and a cache hit cannot add or remove them.
+	if ensureTermination {
+		s.Write([]byte{1})
+	}
 	// Write the CPU features so that we can cache the compiled module for the same CPU.
 	// This prevents the incompatible CPU features from being used.
 	cpu := platform.CpuFeatures.Raw()
@@ -54,7 +59,7 @@ func (e *engine) getCompiledModule(module *wasm.Module, listeners []experimental
 	if ok {
 		return
 	}
-	cm, ok, err = e.getCompiledModuleFromCache(module)
+	cm, ok, err = e.getCompiledModuleFromCache(module, ensureTermination)
 	if ok {
 		cm.parent = e
 		cm.module = module
@@ -116,18 +121,18 @@ func (e *engine) addCompiledModuleToCache(module *wasm.Module, cm *compiledModul
 	if e.fileCache == nil || module.IsHostModule {
 		return
 	}
-	err = e.fileCache.Add(fileCacheKey(module), serializeCompiledModule(e.wazeroVersion, cm))
+	err = e.fileCache.Add(fileCacheKey(module, cm.ensureTermination), serializeCompiledModule(e.wazeroVersion, cm))
 	return
 }
 
-func (e *engine) getCompiledModuleFromCache(module *wasm.Module) (cm *compiledModule, hit bool, err error) {
+func (e *engine) getCompiledModuleFromCache(module *wasm.Module, ensureTermination bool) (cm *compiledModule, hit bool, err error) {
 	if e.fileCache == nil || module.IsHostModule {
 		return
 	}
 
 	// Check if the entries exist in the external cache.
 	var cached io.ReadCloser
-	cached, hit, err = e.fileCache.Get(fileCacheKey(module))
+	cached, hit, err = e.fileCache.Get(fileCacheKey(module, ensureTermination))
 	if !hit || err != nil {
 		return
 	}
@@ -141,7 +146,7 @@ func (e *engine) getCompiledModuleFromCache(module *wasm.Module) (cm *compiledMo
 		hit = false
 		return
 	} else if staleCache {
-		return nil, false, e.fileCache.Delete(fileCacheKey(module))
+		return nil, false, e.fileCache.Delete(fileCacheKey(module, ensureTermination))
 	}
 	return
 }

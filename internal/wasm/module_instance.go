@@ -30,6 +30,12 @@ func (m *ModuleInstance) FailIfClosed() (err error) {
 //
 // Callers of this function must invoke the returned context.CancelFunc to release the spawned Goroutine.
 func (m *ModuleInstance) CloseModuleOnCanceledOrTimeout(ctx context.Context) context.CancelFunc {
+	// A context that can never be done cannot close the module, so there is
+	// nothing to watch. Callers that enforce termination by closing the
+	// module themselves, such as a watchdog, then pay no goroutine per call.
+	if ctx.Done() == nil {
+		return noopCancel
+	}
 	// Creating an empty channel in this case is a bit more efficient than
 	// creating a context.Context and canceling it with the same effect. We
 	// really just need to be notified when to stop listening to the users
@@ -39,6 +45,8 @@ func (m *ModuleInstance) CloseModuleOnCanceledOrTimeout(ctx context.Context) con
 	go m.closeModuleOnCanceledOrTimeout(ctx, cancelChan)
 	return func() { close(cancelChan) }
 }
+
+func noopCancel() {}
 
 // closeModuleOnCanceledOrTimeout is extracted from CloseModuleOnCanceledOrTimeout for testing.
 func (m *ModuleInstance) closeModuleOnCanceledOrTimeout(ctx context.Context, cancelChan <-chan struct{}) {

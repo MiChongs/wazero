@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -451,4 +452,19 @@ func TestModuleInstance_ensureResourcesClosed(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, 2, closer.called)
+}
+
+func TestModuleInstance_CloseModuleOnCanceledOrTimeout_NeverDoneContext(t *testing.T) {
+	s := newStore()
+	cc := &ModuleInstance{ModuleName: "test", s: s, Sys: internalsys.DefaultContext(nil)}
+	before := runtime.NumGoroutine()
+	var cancels []context.CancelFunc
+	for i := 0; i < 100; i++ {
+		cancels = append(cancels, cc.CloseModuleOnCanceledOrTimeout(context.Background()))
+	}
+	require.True(t, runtime.NumGoroutine() < before+10, "no watcher goroutine for a context that is never done")
+	for _, cancel := range cancels {
+		cancel()
+	}
+	require.NoError(t, cc.FailIfClosed())
 }
